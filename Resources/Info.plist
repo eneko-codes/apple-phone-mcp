@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- CFBundleName is the label macOS shows in System Settings > Privacy & Security.
+	     Keep it identical to the binary name so both the Full Disk Access row and the
+	     Contacts row are recognisable. -->
+	<key>CFBundleName</key>
+	<string>apple-phone-mcp</string>
+	<key>CFBundleIdentifier</key>
+	<string>codes.eneko.apple-phone-mcp</string>
+	<key>CFBundleShortVersionString</key>
+	<string>1.0.1</string>
+	<key>CFBundleVersion</key>
+	<string>1</string>
+
+	<!-- Contacts is read only to put a name beside a number. Without this key macOS
+	     denies the request silently, and the server answers with numbers alone.
+
+	     Reading the call history is NOT covered by anything here.
+	     ~/Library/Application Support/CallHistoryDB is behind Full Disk Access, which
+	     has no usage-description key at all — it is granted by hand in System Settings
+	     and a process can only detect that it is missing. -->
+	<key>NSContactsUsageDescription</key>
+	<string>Shows the contact name next to each number in your call history. Nothing in your address book is changed.</string>
+</dict>
+</plist>

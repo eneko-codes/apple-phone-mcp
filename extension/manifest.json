@@ -1,0 +1,55 @@
+{
+  "manifest_version": "0.3",
+  "name": "apple-phone-mcp",
+  "display_name": "Phone",
+  "version": "1.0.1",
+  "description": "Read-only access to the Phone app's call history, with names from Contacts",
+  "long_description": "A local MCP server written in Swift for the call history of the Phone app on this Mac. It is the history shared with your iPhone, read from the local call history database.\n\nThe database is opened read-only — this server cannot write to it, and it reads through the write-ahead log so the newest calls are included. That file is protected, so reading needs Full Disk Access, granted by hand in System Settings. There is no permission dialog for it and no way for a server to ask.\n\nNames come from Contacts, which asks for its own permission the first time calls are listed. Without it every tool still works, showing numbers alone.\n\nPlug and play: there is nothing to configure. Every tool reads; none places a call, deletes a call or changes a contact.\n\nNot affiliated with or endorsed by Apple Inc.",
+  "author": {
+    "name": "eneko-codes",
+    "url": "https://github.com/eneko-codes"
+  },
+  "homepage": "https://github.com/eneko-codes/apple-phone-mcp",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/eneko-codes/apple-phone-mcp"
+  },
+  "license": "MIT",
+  "icon": "icon.png",
+  "keywords": [
+    "phone",
+    "calls",
+    "call history",
+    "facetime",
+    "macos"
+  ],
+  "server": {
+    "type": "binary",
+    "entry_point": "server/apple-phone-mcp",
+    "mcp_config": {
+      "command": "${__dirname}/server/apple-phone-mcp",
+      "args": [],
+      "env": {}
+    }
+  },
+  "tools": [
+    {
+      "name": "phone_status",
+      "description": "Reports whether this server can read the call history and Contacts, how many calls the history holds and the span they cover, and the exact path of the binary to add to Full Disk Access. Lists no calls."
+    },
+    {
+      "name": "calls_list",
+      "description": "Lists calls newest first: date, direction (incoming, outgoing, missed), kind, duration, the other party's number and the contact's name. Filters by date range, direction, kind, number or contact."
+    },
+    {
+      "name": "call_get",
+      "description": "Returns every field the history keeps for one call, including all participants of a group call. Needs an id from calls_list."
+    }
+  ],
+  "compatibility": {
+    "claude_desktop": ">=0.10.0",
+    "platforms": [
+      "darwin"
+    ]
+  }
+}
