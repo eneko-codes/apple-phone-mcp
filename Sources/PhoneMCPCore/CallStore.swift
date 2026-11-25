@@ -9,7 +9,8 @@ public protocol CallStore: Sendable {
     func access() -> DatabaseAccess
     func status() async throws -> StoreStatus
 
-    /// Newest first. `total` counts every match, not just the page.
+    /// Newest first, one page: at most `limit` calls from `offset`. `total` counts every
+    /// match, not just the page. The page is cut at the source, never loaded whole first.
     func calls(_ filter: CallFilter, limit: Int, offset: Int) async throws -> CallPage
 
     /// `nil` when no call has that id.

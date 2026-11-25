@@ -99,7 +99,9 @@ public struct Format: Sendable {
         lines.append("LIMITS")
         lines.append(
             Self.block([
-                ("list limit", "\(Configuration.listLimit) (at most \(Configuration.listLimitRange.upperBound))"),
+                ("calls per page", "\(ToolCatalog.defaultListLimit) (at most \(ToolCatalog.listLimitRange.upperBound))"),
+                ("participants per page", "\(ToolCatalog.defaultParticipantLimit) (at most \(ToolCatalog.participantLimitRange.upperBound))"),
+                ("time limit", "\(PhoneTools.defaultTimeout.components.seconds) seconds per call"),
             ]))
 
         lines.append("")
@@ -116,49 +118,55 @@ public struct Format: Sendable {
         return lines.joined(separator: "\n")
     }
 
+    /// The width of the other parties in a listing row, with the clip marked.
+    static func clipped(_ text: String, to width: Int) -> (text: String, wasClipped: Bool) {
+        guard text.count > width else { return (text, false) }
+        return (String(text.prefix(width - 1)) + "…", true)
+    }
+
+    /// `rows` are the calls of one page, `total` how many match across the whole history.
+    /// The caller has already placed the page: `offset` is where its first row sits, and the
+    /// result starts with the sentence that says what the page leaves out.
     public func calls(
-        _ page: CallPage, names: [AddressKey: String], filter: CallFilter, described: [String],
-        offset: Int
+        _ rows: [CallRecord], total: Int, offset: Int, names: [AddressKey: String],
+        described: [String], notices: [String]
     ) -> String {
-        var scope = described
-        if let direction = filter.direction { scope.insert(direction.rawValue, at: 0) }
-        if let kind = filter.kind { scope.insert(Self.kind(kind), at: 0) }
-        if let from = filter.from {
-            scope.append("from \(DateParsing.roundTrip(from, calendar: calendar))")
-        }
-        if let to = filter.to {
-            scope.append("before \(DateParsing.roundTrip(to, calendar: calendar))")
-        }
-
         let header =
-            "\(page.total) call\(page.total == 1 ? "" : "s")"
-            + (scope.isEmpty ? "" : " · " + scope.joined(separator: " · "))
-        guard !page.calls.isEmpty else {
-            return offset > 0 && page.total > 0
-                ? header + "\nNo calls past offset \(offset)."
-                : header + "\nNothing matched. calls_list with no filters lists every call."
+            "\(total) call\(total == 1 ? "" : "s")"
+            + (described.isEmpty ? "" : " · " + described.joined(separator: " · "))
+            + " · newest first"
+        let position = Notice.page(offset: offset, count: rows.count, total: total, things: "calls")
+        guard !rows.isEmpty else {
+            let empty = total == 0
+                ? header + "\nNothing matched. calls_list with no filters lists every call."
+                : header
+            return ToolStandard.withNotices(notices + [position].compactMap { $0 }, empty)
         }
 
-        var lines = [
-            header,
-            "showing \(offset + 1)–\(offset + page.calls.count), newest first",
-            "",
-        ]
-        for record in page.calls {
+        var anyClipped = false
+        var lines = [header, ""]
+        for record in rows {
+            let parties = Self.clipped(
+                Self.parties(record, names: names), to: ToolCatalog.partiesWidth)
+            anyClipped = anyClipped || parties.wasClipped
             lines.append(
                 "\(timestampWithYear(record.date)) · \(Self.pad(record.direction.rawValue, to: 8))"
                     + " · \(Self.kind(record.kind)) · \(Self.duration(record.duration))"
-                    + " · \(Self.parties(record, names: names)) · id \(record.id)")
+                    + " · \(parties.text) · id \(record.id)")
         }
-        let next = offset + page.calls.count
-        if next < page.total {
-            lines.append("")
-            lines.append("More: call again with offset=\(next).")
-        }
-        return lines.joined(separator: "\n")
+        let clipNotice = anyClipped
+            ? [Notice.clipped(field: "The other parties", width: ToolCatalog.partiesWidth, tool: ToolCatalog.getName)]
+            : []
+        return ToolStandard.withNotices(
+            notices + [position].compactMap { $0 } + clipNotice, lines.joined(separator: "\n"))
     }
 
-    public func call(_ record: CallRecord, names: [AddressKey: String]) -> String {
+    /// `participants` are the addresses of one page of the call's other parties, and
+    /// `participantOffset` where that page starts among all of them.
+    public func call(
+        _ record: CallRecord, participants: [String], participantOffset: Int,
+        participantTotal: Int, names: [AddressKey: String], notices: [String]
+    ) -> String {
         let answered: String? =
             switch (record.direction, record.answered) {
             case (.outgoing, _): "not recorded for outgoing calls"
@@ -166,7 +174,10 @@ public struct Format: Sendable {
             case (_, false?): "no"
             case (_, nil): nil
             }
-        return [
+        let position = Notice.page(
+            offset: participantOffset, count: participants.count, total: participantTotal,
+            things: "participants")
+        let body = [
             "Call \(record.id)",
             Self.block([
                 ("date", timestampWithYear(record.date)),
@@ -174,10 +185,12 @@ public struct Format: Sendable {
                 ("answered", answered),
                 ("kind", Self.kind(record.kind)),
                 ("duration", Self.duration(record.duration)),
-                ("with", record.remoteAddresses.isEmpty
+                ("with", participantTotal == 0
                     ? "(no number recorded)"
-                    : record.remoteAddresses.map { Self.party($0, names: names) }
-                        .joined(separator: "\n")),
+                    : participants.isEmpty
+                        ? nil
+                        : participants.map { Self.party($0, names: names) }
+                            .joined(separator: "\n")),
                 ("name at call time", record.storedName),
                 ("service", record.serviceProvider),
                 ("country", record.countryCode),
@@ -185,5 +198,6 @@ public struct Format: Sendable {
                 ("unique id", record.uniqueID),
             ]),
         ].joined(separator: "\n")
+        return ToolStandard.withNotices(notices + [position].compactMap { $0 }, body)
     }
 }

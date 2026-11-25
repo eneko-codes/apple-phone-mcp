@@ -245,6 +245,9 @@ final class CallHistoryDatabase {
 
         try bind(statement)
         while true {
+            // The deadline cancels the task; stop reading rather than finish a scan nobody
+            // is waiting for.
+            try Task.checkCancellation()
             switch sqlite3_step(statement) {
             case SQLITE_ROW: try row(statement)
             case SQLITE_DONE: return
@@ -260,7 +263,7 @@ final class CallHistoryDatabase {
         sqlite3_exec(handle, sql, nil, nil, nil)
     }
 
-    private static func text(_ statement: OpaquePointer, _ index: Int32) -> String? {
+    fileprivate static func text(_ statement: OpaquePointer, _ index: Int32) -> String? {
         guard sqlite3_column_type(statement, index) != SQLITE_NULL,
             let raw = sqlite3_column_text(statement, index)
         else { return nil }
@@ -268,12 +271,12 @@ final class CallHistoryDatabase {
         return value.isEmpty ? nil : value
     }
 
-    private static func integer(_ statement: OpaquePointer, _ index: Int32) -> Int64? {
+    fileprivate static func integer(_ statement: OpaquePointer, _ index: Int32) -> Int64? {
         guard sqlite3_column_type(statement, index) != SQLITE_NULL else { return nil }
         return sqlite3_column_int64(statement, index)
     }
 
-    private static func double(_ statement: OpaquePointer, _ index: Int32) -> Double? {
+    fileprivate static func double(_ statement: OpaquePointer, _ index: Int32) -> Double? {
         guard sqlite3_column_type(statement, index) != SQLITE_NULL else { return nil }
         return sqlite3_column_double(statement, index)
     }
@@ -302,19 +305,29 @@ final class CallHistoryDatabase {
         return range
     }
 
-    /// Every remote address per call id, from the participant join table.
-    ///
-    /// Read whole: the table holds one row per call participant, and a history is bounded
-    /// by the system to a few thousand calls.
-    func participants() throws -> [Int64: [String]] {
+    /// The remote addresses of calls, per call id, from the participant join table, in the
+    /// order the handles were stored. With `calls` the lookup is for those ids alone; with
+    /// `nil` it reads the whole table, which only an address filter needs: it has to look
+    /// at every call, and the table is a map of short strings, not of call rows.
+    func participants(forCalls calls: [Int64]? = nil) throws -> [Int64: [String]] {
         var byCall: [Int64: [String]] = [:]
+        if let calls, calls.isEmpty { return byCall }
+        let restriction = calls.map {
+            "WHERE j.Z_2REMOTEPARTICIPANTCALLS IN (\(Array(repeating: "?", count: $0.count).joined(separator: ",")))"
+        } ?? ""
         try query(
             """
             SELECT j.Z_2REMOTEPARTICIPANTCALLS, h.ZVALUE
             FROM \(Self.participantTable) j
             JOIN \(Self.handleTable) h ON h.Z_PK = j.Z_4REMOTEPARTICIPANTHANDLES
+            \(restriction)
             ORDER BY j.Z_2REMOTEPARTICIPANTCALLS, h.Z_PK
-            """
+            """,
+            bind: { statement in
+                for (index, call) in (calls ?? []).enumerated() {
+                    sqlite3_bind_int64(statement, Int32(index + 1), call)
+                }
+            }
         ) { statement in
             guard let call = Self.integer(statement, 0), let value = Self.text(statement, 1)
             else { return }
@@ -323,37 +336,88 @@ final class CallHistoryDatabase {
         return byCall
     }
 
-    /// Calls matching every SQL-expressible part of `filter`, newest first.
+    /// One row of `ZCALLRECORD` as read, before its participants are known.
+    private struct Row {
+        let id: Int64
+        let uniqueID: String?
+        let date: Date
+        let duration: Double
+        let originated: Bool
+        let answered: Bool
+        let kind: CallKind
+        let serviceProvider: String?
+        let address: String?
+        let storedName: String?
+        let countryCode: String?
+        let disconnectedCause: Int64?
+
+        init?(_ statement: OpaquePointer) {
+            guard let id = CallHistoryDatabase.integer(statement, 0) else { return nil }
+            self.id = id
+            uniqueID = CallHistoryDatabase.text(statement, 1)
+            date = Date(
+                timeIntervalSinceReferenceDate: CallHistoryDatabase.double(statement, 2) ?? 0)
+            duration = CallHistoryDatabase.double(statement, 3) ?? 0
+            originated = (CallHistoryDatabase.integer(statement, 4) ?? 0) == 1
+            answered = (CallHistoryDatabase.integer(statement, 5) ?? 0) == 1
+            kind = CallKind(rawValue: CallHistoryDatabase.integer(statement, 6) ?? 0)
+            serviceProvider = CallHistoryDatabase.text(statement, 7)
+            address = CallHistoryDatabase.text(statement, 8)
+            storedName = CallHistoryDatabase.text(statement, 9)
+            countryCode = CallHistoryDatabase.text(statement, 10)
+            disconnectedCause = CallHistoryDatabase.integer(statement, 11)
+        }
+
+        func record(participants: [String]) -> CallRecord {
+            var addresses = participants
+            if let address, let key = AddressKey(address),
+                !addresses.contains(where: { AddressKey($0) == key })
+            {
+                addresses.insert(address, at: 0)
+            }
+            return CallRecord(
+                id: id, uniqueID: uniqueID, date: date, duration: duration,
+                direction: .from(originated: originated, answered: answered),
+                answered: originated ? nil : answered, kind: kind,
+                serviceProvider: serviceProvider, remoteAddresses: addresses,
+                storedName: storedName, countryCode: countryCode,
+                disconnectedCause: disconnectedCause)
+        }
+    }
+
+    private func selectColumns() throws -> String {
+        """
+        SELECT r.Z_PK, \(try selected("ZUNIQUE_ID")), r.ZDATE, r.ZDURATION,
+               r.ZORIGINATED, r.ZANSWERED, r.ZCALLTYPE, \(try selected("ZSERVICE_PROVIDER")),
+               r.ZADDRESS, \(try selected("ZNAME")), \(try selected("ZISO_COUNTRY_CODE")),
+               \(try selected("ZDISCONNECTED_CAUSE"))
+        FROM \(Self.recordTable) r
+        """
+    }
+
+    /// The SQL-expressible part of `filter`, as a `WHERE` clause (or nothing) and the
+    /// values to bind to it, in order.
     ///
-    /// The address part of the filter is not applied here: an address needs the
-    /// participant table and the same normalisation Contacts numbers get, and that is
-    /// done once, in Swift, by the store.
-    func records(_ filter: CallFilter, id: Int64? = nil) throws -> [CallRecord] {
+    /// The address part of the filter is not here: an address needs the participant table
+    /// and the same normalisation Contacts numbers get, and that is done in Swift.
+    private func restriction(_ filter: CallFilter) -> (sql: String, binds: [(OpaquePointer, Int32) -> Void]) {
         var clauses: [String] = []
         var binds: [(OpaquePointer, Int32) -> Void] = []
 
-        func bindDouble(_ value: Double) {
-            binds.append { sqlite3_bind_double($0, $1, value) }
-        }
-        func bindInteger(_ value: Int64) {
-            binds.append { sqlite3_bind_int64($0, $1, value) }
-        }
-
-        if let id {
-            clauses.append("r.Z_PK = ?")
-            bindInteger(id)
-        }
         if let from = filter.from {
             clauses.append("r.ZDATE >= ?")
-            bindDouble(from.timeIntervalSinceReferenceDate)
+            let value = from.timeIntervalSinceReferenceDate
+            binds.append { sqlite3_bind_double($0, $1, value) }
         }
         if let to = filter.to {
             clauses.append("r.ZDATE < ?")
-            bindDouble(to.timeIntervalSinceReferenceDate)
+            let value = to.timeIntervalSinceReferenceDate
+            binds.append { sqlite3_bind_double($0, $1, value) }
         }
         if let kind = filter.kind {
             clauses.append("r.ZCALLTYPE = ?")
-            bindInteger(kind.rawValue)
+            let value = kind.rawValue
+            binds.append { sqlite3_bind_int64($0, $1, value) }
         }
         // Literal predicates chosen from an enum; no caller text reaches the SQL.
         switch filter.direction {
@@ -364,52 +428,68 @@ final class CallHistoryDatabase {
             clauses.append("COALESCE(r.ZORIGINATED, 0) = 0 AND COALESCE(r.ZANSWERED, 0) = 0")
         case nil: break
         }
+        return (clauses.isEmpty ? "" : "WHERE " + clauses.joined(separator: " AND "), binds)
+    }
 
-        let sql = """
-            SELECT r.Z_PK, \(try selected("ZUNIQUE_ID")), r.ZDATE, r.ZDURATION,
-                   r.ZORIGINATED, r.ZANSWERED, r.ZCALLTYPE, \(try selected("ZSERVICE_PROVIDER")),
-                   r.ZADDRESS, \(try selected("ZNAME")), \(try selected("ZISO_COUNTRY_CODE")),
-                   \(try selected("ZDISCONNECTED_CAUSE"))
-            FROM \(Self.recordTable) r
-            \(clauses.isEmpty ? "" : "WHERE " + clauses.joined(separator: " AND "))
-            ORDER BY r.ZDATE DESC, r.Z_PK DESC
-            """
+    /// Newest first, and `Z_PK` breaks a tie between two calls of the same instant, so no
+    /// two rows ever tie and a second page starts exactly where the first ended.
+    private static let order = "ORDER BY r.ZDATE DESC, r.Z_PK DESC"
 
-        let participants = try participants()
-        var records: [CallRecord] = []
-        try query(
-            sql,
-            bind: { statement in
-                for (offset, bind) in binds.enumerated() { bind(statement, Int32(offset + 1)) }
-            }
-        ) { statement in
-            guard let id = Self.integer(statement, 0) else { return }
-            let originated = (Self.integer(statement, 4) ?? 0) == 1
-            let answered = (Self.integer(statement, 5) ?? 0) == 1
-
-            var addresses = participants[id] ?? []
-            if let address = Self.text(statement, 8),
-                let key = AddressKey(address),
-                !addresses.contains(where: { AddressKey($0) == key })
-            {
-                addresses.insert(address, at: 0)
-            }
-
-            records.append(
-                CallRecord(
-                    id: id,
-                    uniqueID: Self.text(statement, 1),
-                    date: Date(timeIntervalSinceReferenceDate: Self.double(statement, 2) ?? 0),
-                    duration: Self.double(statement, 3) ?? 0,
-                    direction: .from(originated: originated, answered: answered),
-                    answered: originated ? nil : answered,
-                    kind: CallKind(rawValue: Self.integer(statement, 6) ?? 0),
-                    serviceProvider: Self.text(statement, 7),
-                    remoteAddresses: addresses,
-                    storedName: Self.text(statement, 9),
-                    countryCode: Self.text(statement, 10),
-                    disconnectedCause: Self.integer(statement, 11)))
+    /// One page of the calls that match `filter`, newest first, and how many match in all.
+    ///
+    /// Without an address filter the database does the paging: a `COUNT` and a `LIMIT`.
+    /// With one, every call has to be looked at, so the rows are streamed and only the
+    /// page is kept; memory stays the size of the page however long the history is.
+    func page(_ filter: CallFilter, limit: Int, offset: Int) throws -> (calls: [CallRecord], total: Int) {
+        let (clause, binds) = restriction(filter)
+        func bindFilter(_ statement: OpaquePointer) {
+            for (index, bind) in binds.enumerated() { bind(statement, Int32(index + 1)) }
         }
-        return records
+
+        guard let wanted = filter.addresses else {
+            var total = 0
+            try query("SELECT COUNT(*) FROM \(Self.recordTable) r \(clause)", bind: bindFilter) {
+                total = Int(Self.integer($0, 0) ?? 0)
+            }
+            var rows: [Row] = []
+            try query(
+                "\(try selectColumns()) \(clause) \(Self.order) LIMIT ? OFFSET ?",
+                bind: { statement in
+                    bindFilter(statement)
+                    sqlite3_bind_int64(statement, Int32(binds.count + 1), Int64(limit))
+                    sqlite3_bind_int64(statement, Int32(binds.count + 2), Int64(offset))
+                }
+            ) { statement in
+                if let row = Row(statement) { rows.append(row) }
+            }
+            let byCall = try participants(forCalls: rows.map(\.id))
+            return (rows.map { $0.record(participants: byCall[$0.id] ?? []) }, total)
+        }
+
+        let byCall = try participants()
+        var total = 0
+        var kept: [CallRecord] = []
+        try query("\(try selectColumns()) \(clause) \(Self.order)", bind: bindFilter) { statement in
+            guard let row = Row(statement) else { return }
+            let record = row.record(participants: byCall[row.id] ?? [])
+            guard record.remoteAddresses.contains(where: { AddressKey($0).map(wanted.contains) ?? false })
+            else { return }
+            if total >= offset && kept.count < limit { kept.append(record) }
+            total += 1
+        }
+        return (kept, total)
+    }
+
+    /// One call by id, or `nil`.
+    func record(id: Int64) throws -> CallRecord? {
+        var found: Row?
+        try query(
+            "\(try selectColumns()) WHERE r.Z_PK = ?",
+            bind: { sqlite3_bind_int64($0, 1, id) }
+        ) { statement in
+            found = Row(statement)
+        }
+        guard let found else { return nil }
+        return found.record(participants: try participants(forCalls: [id])[id] ?? [])
     }
 }

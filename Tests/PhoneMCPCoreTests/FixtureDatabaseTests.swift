@@ -209,6 +209,84 @@ struct FixtureDatabaseTests {
         #expect(page.calls.map(\.id) == [4])
     }
 
+    @Test("The database pages at the source: a page, the total, and no tie between two calls")
+    func pagesAtTheSource() async throws {
+        let fixture = try Fixture()
+        // Ten calls of the very same instant: only the id can order them.
+        for id in 1...10 {
+            try fixture.insertCall(id: id, at: Fixtures.date(2026, 8, 10, 9, 0), originated: 1, answered: 0)
+        }
+        let store = SystemCallStore(databasePath: fixture.path)
+        var seen: [Int64] = []
+        for offset in stride(from: 0, to: 10, by: 4) {
+            let page = try await store.calls(CallFilter(), limit: 4, offset: offset)
+            #expect(page.total == 10)
+            seen += page.calls.map(\.id)
+        }
+        #expect(seen == Array((1...10).reversed()).map(Int64.init))
+        #expect(try await store.calls(CallFilter(), limit: 4, offset: 10).calls.isEmpty)
+        #expect(try await store.calls(CallFilter(), limit: 4, offset: 10).total == 10)
+    }
+
+    @Test("A page under an address filter holds only the page, and the total counts every match")
+    func addressFilterPages() async throws {
+        let fixture = try Fixture()
+        for id in 1...9 {
+            let address = id.isMultiple(of: 3) ? "+12125550199" : "+12125550101"
+            try fixture.insertCall(
+                id: id, at: Fixtures.date(2026, 8, 10, 9, id), originated: 0, answered: 1,
+                address: address)
+        }
+        var filter = CallFilter()
+        filter.addresses = [AddressKey("2125550101")!]
+        let store = SystemCallStore(databasePath: fixture.path)
+        let first = try await store.calls(filter, limit: 4, offset: 0)
+        #expect(first.total == 6)
+        #expect(first.calls.map(\.id) == [8, 7, 5, 4])
+        let second = try await store.calls(filter, limit: 4, offset: 4)
+        #expect(second.calls.map(\.id) == [2, 1])
+        #expect(second.total == 6)
+    }
+
+    @Test("A filter by date pages in SQL with its own total")
+    func dateFilterPages() async throws {
+        let fixture = try Fixture()
+        for id in 1...6 {
+            try fixture.insertCall(id: id, at: Fixtures.date(2026, 8, id, 9, 0), originated: 0, answered: 1)
+        }
+        var filter = CallFilter()
+        filter.from = Fixtures.date(2026, 8, 2, 0, 0)
+        filter.to = Fixtures.date(2026, 8, 5, 0, 0)
+        let page = try await SystemCallStore(databasePath: fixture.path)
+            .calls(filter, limit: 2, offset: 1)
+        #expect(page.total == 3)
+        #expect(page.calls.map(\.id) == [3, 2])
+    }
+
+    @Test("The participants of a page are read for that page's calls alone")
+    func participantsOfThePage() async throws {
+        let fixture = try Fixture()
+        for id in 1...3 {
+            try fixture.insertCall(id: id, at: Fixtures.date(2026, 8, id, 9, 0), originated: 1, answered: 0)
+            try fixture.insertParticipant(call: id, handle: 10 + id, value: "+121255501\(10 + id)")
+        }
+        let page = try await SystemCallStore(databasePath: fixture.path)
+            .calls(CallFilter(), limit: 1, offset: 1)
+        #expect(page.calls.map(\.remoteAddresses) == [["+12125550101", "+12125550112"]])
+    }
+
+    @Test("A cancelled call stops reading")
+    func cancelledScanStops() async throws {
+        let fixture = try Fixture()
+        try fixture.insertCall(id: 1, at: Fixtures.date(2026, 8, 10, 9, 0), originated: 0, answered: 1)
+        let store = SystemCallStore(databasePath: fixture.path)
+        let task = Task {
+            withUnsafeCurrentTask { $0?.cancel() }
+            return try await store.calls(CallFilter(), limit: 1, offset: 0)
+        }
+        await #expect(throws: CancellationError.self) { _ = try await task.value }
+    }
+
     @Test("status counts every call and the span they cover")
     func status() async throws {
         let fixture = try populated()

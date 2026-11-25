@@ -2,9 +2,9 @@
   "manifest_version": "0.3",
   "name": "apple-phone-mcp",
   "display_name": "Phone",
-  "version": "1.0.2",
+  "version": "2.0.0",
   "description": "Read-only access to the Phone app's call history, with names from Contacts",
-  "long_description": "A local MCP server written in Swift for the call history of the Phone app on this Mac. It is the history shared with your iPhone, read from the local call history database.\n\nThe database is opened read-only — this server cannot write to it, and it reads through the write-ahead log so the newest calls are included. That file is protected, so reading needs Full Disk Access, granted by hand in System Settings. There is no permission dialog for it and no way for a server to ask.\n\nNames come from Contacts, which asks for its own permission the first time calls are listed. Without it every tool still works, showing numbers alone.\n\nPlug and play: there is nothing to configure. Every tool reads; none places a call, deletes a call or changes a contact.\n\nNot affiliated with or endorsed by Apple Inc.",
+  "long_description": "A local MCP server written in Swift for the call history of the Phone app on this Mac. It is the history shared with your iPhone, read from the local call history database.\n\nThe database is opened read-only — this server cannot write to it, and it reads through the write-ahead log so the newest calls are included. That file is protected, so reading needs Full Disk Access, granted by hand in System Settings. There is no permission dialog for it and no way for a server to ask.\n\nNames come from Contacts, which asks for its own permission the first time calls are listed. Without it every tool still works, showing numbers alone.\n\nResults are bounded. Calls come one page at a time, newest first, and the participants of a group call too; when a result leaves some out, its first lines say how many exist and the exact limit and offset that return the rest, and from_date and to_date narrow a listing. A limit or offset outside its range is moved to the nearest allowed value and the result says which was used; a call id outside its range, or an argument a tool does not list, is refused. A call that has not finished after 30 seconds is abandoned and answered with an error that says so; nothing is changed, because nothing is ever written.\n\nPlug and play: there is nothing to configure. Every tool reads; none places a call, deletes a call or changes a contact.\n\nNot affiliated with or endorsed by Apple Inc.",
   "author": {
     "name": "eneko-codes",
     "url": "https://github.com/eneko-codes"
@@ -39,11 +39,11 @@
     },
     {
       "name": "calls_list",
-      "description": "Lists calls newest first: date, direction (incoming, outgoing, missed), kind, duration, the other party's number and the contact's name. Filters by date range, direction, kind, number or contact."
+      "description": "Lists calls one page at a time, newest first: date, direction (incoming, outgoing, missed), kind, duration, the other party's number and the contact's name. Filters by from_date and to_date, direction, kind, number or contact; limit and offset reach the rest."
     },
     {
       "name": "call_get",
-      "description": "Returns every field the history keeps for one call, including all participants of a group call. Needs an id from calls_list."
+      "description": "Returns every field the history keeps for one call, with the participants of a group call a page at a time (limit and offset). Needs an id from calls_list."
     }
   ],
   "compatibility": {

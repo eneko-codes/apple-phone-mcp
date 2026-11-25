@@ -58,19 +58,13 @@ public struct SystemCallStore: CallStore {
 
     public func calls(_ filter: CallFilter, limit: Int, offset: Int) async throws -> CallPage {
         let database = try open()
-        var matches = try database.read { try database.records(filter) }
-        if let wanted = filter.addresses {
-            matches = matches.filter { record in
-                record.remoteAddresses.contains { AddressKey($0).map(wanted.contains) ?? false }
-            }
-        }
-        let page = Array(matches.dropFirst(offset).prefix(limit))
-        return CallPage(calls: page, total: matches.count)
+        let found = try database.read { try database.page(filter, limit: limit, offset: offset) }
+        return CallPage(calls: found.calls, total: found.total)
     }
 
     public func call(id: Int64) async throws -> CallRecord? {
         let database = try open()
-        return try database.read { try database.records(CallFilter(), id: id).first }
+        return try database.read { try database.record(id: id) }
     }
 
     /// Read with `stat`, which does not open the file.
