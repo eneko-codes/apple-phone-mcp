@@ -1,10 +1,9 @@
 import Foundation
-import MCP
 
 public enum PhoneMCPServer {
 
     public static let name = "apple-phone-mcp"
-    public static let version = "1.0.1"
+    public static let version = "1.0.2"
 
     /// Returned from `initialize`. It carries what per-tool descriptions cannot state
     /// once: which permission governs what, where the history comes from, and which of its
@@ -45,25 +44,15 @@ public enum PhoneMCPServer {
     public static func run(
         store: any CallStore = SystemCallStore(),
         contacts: any ContactResolver = SystemContactResolver()
-    ) async throws {
-        let tools = PhoneTools(store: store, contacts: contacts)
-        let server = Server(
-            name: name,
-            version: version,
-            instructions: instructions,
-            capabilities: .init(tools: .init(listChanged: false))
-        )
-
-        await server.withMethodHandler(ListTools.self) { _ in
-            .init(tools: ToolCatalog.all())
-        }
-        await server.withMethodHandler(CallTool.self) { await tools.handle($0) }
-
-        // The default StdioTransport logger is a no-op handler. Leave it that way: a
-        // logger writing to stdout would interleave with the JSON-RPC stream and break
-        // every response after the first log line.
+    ) async {
         Diagnostics.started(version: version)
-        try await server.start(transport: StdioTransport())
-        await server.waitUntilCompleted()
+        await serveStandardStreams(
+            handler: handler(tools: PhoneTools(store: store, contacts: contacts)))
+    }
+
+    public static func handler(tools: PhoneTools) -> MCPHandler {
+        MCPHandler(
+            name: name, version: version, instructions: instructions,
+            catalog: ToolCatalog.all(), tools: tools)
     }
 }

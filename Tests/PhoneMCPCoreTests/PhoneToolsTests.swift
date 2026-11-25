@@ -1,5 +1,4 @@
 import Foundation
-import MCP
 import Testing
 
 @testable import PhoneMCPCore
@@ -16,10 +15,10 @@ struct PhoneToolsTests {
     ) async -> (text: String, isError: Bool) {
         let tools = PhoneTools(store: store, contacts: contacts, calendar: Fixtures.calendar)
         let result = await tools.handle(.init(name: name, arguments: arguments))
-        guard case .text(let text, _, _) = result.content.first else {
+        guard case .text(let text) = result.content.first else {
             return ("(no text content)", true)
         }
-        return (text, result.isError ?? false)
+        return (text, result.isError)
     }
 
     private func stocked() -> FakeCallStore {
