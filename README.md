@@ -28,8 +28,8 @@ Not affiliated with or endorsed by Apple Inc.
 | Tool | Kind | What it does |
 |---|---|---|
 | `phone_status` | read | Reports whether the call history and Contacts can be read, how many calls the history holds and the span they cover, and the exact path of the binary to add to Full Disk Access. Lists no calls. |
-| `calls_list` | read | Calls newest first: date, direction, kind, duration, number and contact name. Filters by date range, direction, kind, number or contact; pages with `limit` and `offset`. |
-| `call_get` | read | Every field the history keeps for one call, including all participants of a group call. |
+| `calls_list` | read | Calls newest first: date, direction, kind, duration, number and contact name. One page at a time (`limit`, `offset`); filters by `from_date` and `to_date` (both inclusive), direction, kind, number or contact. |
+| `call_get` | read | Every field the history keeps for one call, with the participants of a group call a page at a time (`limit`, `offset`). |
 
 ## Frameworks and APIs
 
@@ -41,6 +41,17 @@ Not affiliated with or endorsed by Apple Inc.
 | `NSContactsUsageDescription` in an embedded Info.plist | The Contacts consent dialog | [NSContactsUsageDescription](https://developer.apple.com/documentation/bundleresources/information-property-list/nscontactsusagedescription) |
 
 ## The rules worth knowing before you use it
+
+**Results are bounded, and a result says what it leaves out.** `calls_list` returns one page
+of calls, newest first, and `call_get` one page of a call's participants; the first lines
+of a page that is not the whole say how many exist and the `offset` of the next one. A
+`limit` or `offset` outside its range is moved to the nearest allowed value and the result
+says which was used. A call id outside its range, a value of the wrong type, a date that
+does not exist and an argument a tool does not list are refused. `to_date` is inclusive at
+the precision written, so a day covers that whole day. The other parties of a group call
+are clipped in a listing row, and `call_get` reads them all. A call that has not finished
+after 30 seconds is abandoned and answered with an error that says so. The figures are
+constants in `ToolCatalog`, and the schemas, descriptions and instructions quote them.
 
 **The database is opened `mode=ro`, and deliberately not `immutable=1`.** The system keeps
 the call history in WAL mode and checkpoints rarely, so the newest calls often live only

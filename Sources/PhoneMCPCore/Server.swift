@@ -3,7 +3,7 @@ import Foundation
 public enum PhoneMCPServer {
 
     public static let name = "apple-phone-mcp"
-    public static let version = "1.0.2"
+    public static let version = "2.0.0"
 
     /// Returned from `initialize`. It carries what per-tool descriptions cannot state
     /// once: which permission governs what, where the history comes from, and which of its
@@ -34,6 +34,21 @@ public enum PhoneMCPServer {
         numbers in the local database and can change if the system rebuilds it, so look \
         them up again rather than reusing one from earlier in the conversation. Totals, \
         counts per person and other summaries are yours to compute from calls_list rows.
+
+        LISTS COME IN PAGES. calls_list returns \(ToolCatalog.defaultListLimit) calls by \
+        default, newest first, and at most \(ToolCatalog.listLimitRange.upperBound); \
+        call_get lists the participants of a group call \(ToolCatalog.defaultParticipantLimit) \
+        at a time, at most \(ToolCatalog.participantLimitRange.upperBound). When a result \
+        leaves some out, its first lines say how many exist and the offset of the next \
+        page: pass limit and offset. Narrow with from_date and to_date, both inclusive. A \
+        limit or offset outside its range is moved to the nearest allowed value and the \
+        first lines say which was used; a call id outside its range is refused, and so is an \
+        argument the tool does not list.
+
+        EVERY CALL IS BOUNDED. One that has not finished after \
+        \(PhoneTools.defaultTimeout.components.seconds) seconds is abandoned and answered \
+        with an error saying so; nothing is changed, because nothing is ever written. Retry \
+        with a narrower call.
 
         This server never modifies or deletes a call, never places one and never writes to \
         Contacts.

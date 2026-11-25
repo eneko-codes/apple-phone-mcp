@@ -48,6 +48,18 @@ struct ManifestTests {
         }
     }
 
+    /// The manifest is plain JSON and cannot take the figure from the constant, so this
+    /// holds the one bound it states to the one the code enforces.
+    @Test("The manifest and the README state the deadline the server enforces")
+    func prosStatesTheDeadline() throws {
+        let seconds = PhoneTools.defaultTimeout.components.seconds
+        let description = try #require(try manifest()["long_description"] as? String)
+        #expect(description.contains("after \(seconds) seconds"))
+        let readme = try String(
+            contentsOf: Self.repositoryRoot.appending(path: "README.md"), encoding: .utf8)
+        #expect(readme.replacingOccurrences(of: "\n", with: " ").contains("after \(seconds) seconds"))
+    }
+
     /// The version is read by three different things — the extension installer, the
     /// `initialize` response, and the embedded Info.plist that TCC shows. Two of them
     /// disagreeing is how a bug report ends up describing a build nobody has.

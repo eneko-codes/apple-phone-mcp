@@ -16,7 +16,9 @@ Every tool reads. None places, deletes or edits a call, and none writes to Conta
 
 A local MCP server (Swift 6, stdio transport) for the Phone app's call history. Reads come from `~/Library/Application Support/CallHistoryDB/CallHistory.storedata` (read-only, through the write-ahead log); names come from Contacts. No network, no credential, no cloud API, **no third-party dependency**: `Package.swift` lists none, and the MCP protocol (JSON-RPC over stdio) is `MCPServer.swift` over Foundation. Adding a package needs the owner's say-so.
 
-**`MCPServer.swift`, `Value.swift` and `Tests/…/MCPProtocolTests.swift` are copied unchanged into every one of the owner's MCP servers** (the test file differs only in its `@testable import`). A change to one is made to every copy in the same piece of work; never let a copy drift.
+**`MCPServer.swift`, `Value.swift`, `ToolStandard.swift` and the tests `MCPProtocolTests.swift` and `ToolStandardTests.swift` are copied unchanged into every one of the owner's MCP servers** (the test files differ only in their `@testable import`). A change to one is made to every copy in the same piece of work; never let a copy drift.
+
+`ToolStandard.swift` holds what every tool here must keep to: the longest result, description and error, the time a call may take, the fixed wording of each notice that says what a result left out (`Notice`), and the guard `MCPServer.swift` passes every result through. A tool bounds its own result and says how to get the rest; the guard only catches the one that forgot. `Deadline.swift` is a copy of the same enum in the other servers, kept apart so it can be replaced when it moves into the shared file.
 
 ## APIs
 
@@ -57,6 +59,8 @@ otool -P .build/release/apple-phone-mcp | grep NSContactsUsageDescription
 **Apple silicon only, deliberately.** `scripts/pack.sh` builds for arm64 alone — a plain `swift build -c release`, no `--arch` flags — and fails if the binary holds any other architecture. Do not add an x86_64 slice back.
 
 `CallStore` and `ContactResolver` are the two seams. `SystemCallStore` → `CallHistoryDatabase` is the only code that speaks SQL; `SystemContactResolver` is the only code that touches Contacts. Every tool call opens its own connection, verifies the schema and runs inside one read transaction.
+
+**How a tool keeps to the tool standard here.** Sizes are constants in `ToolCatalog`, and the schemas, descriptions and instructions quote them by interpolation, never as literals. `Arguments.int` moves a quantity (`limit`, `offset`) into its range and collects the sentence that says so; `requiredID` refuses an id outside its range, because the nearest one would name another call; `refuseUnknown` refuses an argument the schema does not list. `calls_list` pages at the source: `CallHistoryDatabase.page` counts and limits in SQL, or, under an address filter that SQL cannot express, streams the rows and keeps only the page, so memory is the size of a page. Order is `ZDATE DESC, Z_PK DESC`, which never ties. `Format` puts the notices (`Notice.page`, `Notice.clipped`) before the data and `ToolStandard.fitting` halves a page whose text would still be too long. `call_get` pages the participants of a group call the same way. Every call runs under `Deadline` (`PhoneTools.defaultTimeout`). `BoundsTests` holds each bound, notice and length to this.
 
 ## Diagnostics
 

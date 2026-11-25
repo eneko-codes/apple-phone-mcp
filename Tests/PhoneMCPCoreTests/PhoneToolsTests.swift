@@ -99,8 +99,10 @@ struct PhoneToolsTests {
     func readsNeedAccess() async {
         let store = stocked()
         store.accessValue = .denied
-        for name in [ToolCatalog.listName, ToolCatalog.getName] {
-            let (text, isError) = await call(name, ["call_id": 1], store: store)
+        for (name, arguments) in [
+            (ToolCatalog.listName, [String: Value]()), (ToolCatalog.getName, ["call_id": 1]),
+        ] {
+            let (text, isError) = await call(name, arguments, store: store)
             #expect(isError, "\(name)")
             #expect(text.contains("Full Disk Access") || text.contains("FULL DISK ACCESS"))
         }
@@ -157,7 +159,7 @@ struct PhoneToolsTests {
         let store = stocked()
         let (text, isError) = await call(
             ToolCatalog.listName,
-            ["direction": "outgoing", "kind": "facetime_video", "from": "2026-08-12", "to": "2026-08-12"],
+            ["direction": "outgoing", "kind": "facetime_video", "from_date": "2026-08-12", "to_date": "2026-08-12"],
             store: store)
         #expect(!isError)
         #expect(text.hasPrefix("1 call ·"))
@@ -212,20 +214,18 @@ struct PhoneToolsTests {
     @Test("A range that ends before it starts is refused")
     func endBeforeStart() async {
         let (text, isError) = await call(
-            ToolCatalog.listName, ["from": "2026-08-12", "to": "2026-08-01"])
+            ToolCatalog.listName, ["from_date": "2026-08-12", "to_date": "2026-08-01"])
         #expect(isError)
-        #expect(text.contains("before 'from'"))
+        #expect(text.contains("'to_date' ends before 'from_date'"))
     }
 
-    @Test("Paging says where the next page starts")
+    @Test("Paging says where the next page starts, before the data")
     func paging() async {
         let (text, _) = await call(ToolCatalog.listName, ["limit": 2], store: stocked())
-        #expect(text.contains("showing 1–2"))
-        #expect(text.contains("offset=2"))
+        #expect(text.hasPrefix("Showing 1–2 of 4 calls. Pass offset=2 for the next page.\n\n4 calls"))
         let (last, _) = await call(
             ToolCatalog.listName, ["limit": 2, "offset": 2], store: stocked())
-        #expect(last.contains("showing 3–4"))
-        #expect(!last.contains("offset="))
+        #expect(last.hasPrefix("Showing 3–4 of 4 calls. That is all.\n\n"))
     }
 
     // MARK: call_get
@@ -241,9 +241,10 @@ struct PhoneToolsTests {
     @Test("call_get lists every participant of a group call")
     func groupParticipants() async {
         let (text, _) = await call(
-            ToolCatalog.getName, ["call_id": "4"], store: stocked(), contacts: addressBook())
+            ToolCatalog.getName, ["call_id": 4], store: stocked(), contacts: addressBook())
         #expect(text.contains("Jon Example (+12125550102)"))
         #expect(text.contains("+12125550103"))
+        #expect(!text.contains("Showing"))
     }
 
     @Test("An unknown id is reported as such")

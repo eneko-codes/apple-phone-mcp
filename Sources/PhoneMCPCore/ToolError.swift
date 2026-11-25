@@ -2,6 +2,9 @@ import Foundation
 
 public enum ToolError: Error, Equatable {
     case notAuthorized(DatabaseAccess)
+    case unknownTool(String)
+    case unknownArgument(name: String, allowed: [String])
+    case timedOut(seconds: Int)
     case missingArgument(String)
     case badArgument(name: String, reason: String)
     case badDate(argument: String, value: String)
@@ -17,6 +20,25 @@ public enum ToolError: Error, Equatable {
         case .notAuthorized(let access):
             return Self.accessMessage(access)
 
+        case .unknownTool(let name):
+            return "'\(ToolStandard.echo(name))' is not a tool of this server."
+
+        case .unknownArgument(let name, let allowed):
+            let takes = allowed.isEmpty
+                ? "This tool takes no arguments."
+                : "This tool takes: \(allowed.joined(separator: ", "))."
+            return "Unknown argument '\(ToolStandard.echo(name))'. \(takes)"
+
+        case .timedOut(let seconds):
+            return """
+                The call did not finish within \(seconds) seconds and was abandoned. This \
+                server only reads, so nothing was changed.
+
+                Try again with a narrower call: from_date and to_date, a filter, or a lower \
+                limit. A first call that asks for access to Contacts waits for the answer to \
+                the macOS dialog; answer it and call again.
+                """
+
         case .missingArgument(let name):
             return "Missing required argument '\(name)'."
 
@@ -25,16 +47,17 @@ public enum ToolError: Error, Equatable {
 
         case .badDate(let argument, let value):
             return """
-                Argument '\(argument)' is not a date this server accepts: '\(value)'
+                Argument '\(argument)' is not a date this server accepts: '\(ToolStandard.echo(value))'
 
                 Use one of:
                 \(DateParsing.acceptedForms)
 
-                A plain day given as 'to' covers that whole day.
+                A day that does not exist, such as 30 February, is refused. to_date is \
+                inclusive at the precision written: a day covers that whole day.
                 """
 
         case .endBeforeStart:
-            return "'to' is before 'from'. A range cannot end before it begins."
+            return "'to_date' ends before 'from_date'. A range cannot end before it begins."
 
         case .callNotFound(let id):
             return """
@@ -58,7 +81,7 @@ public enum ToolError: Error, Equatable {
 
         case .contactNotFound(let name):
             return """
-                No contact's name matches '\(name)', or the contacts that match have no phone
+                No contact's name matches '\(ToolStandard.echo(name))', or the contacts that match have no phone
                 number or email to look for.
 
                 The name is matched by Contacts' own name search, not by this server. Try a
