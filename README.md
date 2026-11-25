@@ -87,12 +87,15 @@ writes to Contacts.
 ### 1. Build the bundle
 
 ```bash
-security find-identity -v -p codesigning
+security find-identity -v -p codesigning   # copy the 40-character hash of an Apple Development or Developer ID Application identity
 ```
 
 ```bash
-MCPB_SIGN_IDENTITY="Apple Development: Your Name (TEAMID)" ./scripts/pack.sh
+MCPB_SIGN_IDENTITY="<identity hash>" ./scripts/pack.sh
 ```
+
+Pass the hash, not the certificate's name: `pack.sh` prints the identity it signs with,
+and the name is yours.
 
 That builds an arm64 (Apple silicon only) release binary, signs it, checks the embedded
 `Info.plist` survived both linking and signing, prints the designated requirement, and
@@ -141,7 +144,7 @@ build, so a silent regression to ad-hoc is visible immediately.
 ### Preparing something to distribute
 
 ```bash
-MCPB_HARDENED=1 MCPB_SIGN_IDENTITY="Developer ID Application: …" ./scripts/pack.sh
+MCPB_HARDENED=1 MCPB_SIGN_IDENTITY="<Developer ID Application hash>" ./scripts/pack.sh
 ```
 
 That adds the hardened runtime and a secure timestamp, which notarisation requires.
